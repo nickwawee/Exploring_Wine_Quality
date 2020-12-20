@@ -1,0 +1,450 @@
+---
+title: 'Appendix: Evaluating Wine Quality'
+author: "Nick Wawee"
+date: "12/4/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(reshape2)
+library(LearnEDAfunctions)
+library(coin)
+library(forcats)
+library(jtools)
+library(ggstance)
+library(broom.mixed)
+```
+
+```{r functions, include = F}
+plotdists = function(df, path, brtype = 'Scott'){
+  plotlist = list()
+  for (col in colnames(df)){
+    x = df[,col]
+    if (class(x)=='factor'){
+      dfnew = data.frame(col = factor(), count = integer())
+      for (level in levels(x)){
+        count = length(which(x==level))
+        dfnew = rbind(data.frame(col= level, count = count), dfnew)
+      }
+      dfnew$col <- factor(dfnew$col, levels = dfnew$col[order(dfnew$count)])
+      p = ggplot(dfnew, aes(x=col, y=count))+
+        geom_bar(stat= 'identity')+
+        plot_opts+
+        labs(x = col, y = 'Count')+
+        geom_text(aes(label = count), vjust = -0.3) + theme(axis.title = element_text(size = 24))
+      plotlist[[col]] = p
+    }else if (class(x) == 'numeric' | class(x) == 'integer'){
+      dfnew =data.frame(col = class(x))
+      histinfo = hist(x = x , breaks=brtype, plot = F)
+      p = ggplot(as.data.frame(x), aes(x=x))+
+        geom_histogram(bins = length(histinfo$breaks))+plot_opts+
+        geom_vline(aes(xintercept = median(x)), 
+             linetype = "dashed", size = 1, col = 'red')+
+        labs(x = col, y = 'Count')+ theme(axis.title = element_text(size = 24))
+        
+      plotlist[[col]] = p 
+    }
+  }
+  pfinal =ggarrange(plotlist = plotlist)
+  ggsave(paste(path,'dists.pdf',sep=""), pfinal, device = 'pdf',height=1.3*length(plotlist) , width=1.3*length(plotlist)*1.5, units="in", limitsize = FALSE, dpi=900)
+  return(pfinal)
+}
+
+
+plot_opts =   theme_bw()+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black") , axis.title.x = element_text(face='bold', size = 14), axis.title.y = element_text(face='bold', size = 14), plot.title = element_text(face='bold', size = 18, hjust=0.5))
+
+
+#functions
+summaries2 = function(datalist){
+  letterlist = list()
+  outlierlist = list()
+  for (name in names(datalist)){
+    x = sort(datalist[[name]],decreasing = F) #selecting data
+  
+    #calculating depths
+    depth_m = (length(x) + 1)/2
+    depth_f = (depth_m + 1)/2
+  
+    #calculating letter values
+  
+    #Mean and Median
+    med = median(x)
+    average = mean(x)
+  
+    #Fourth Calculations
+    if (depth_m + depth_f %% 1 > 0){
+      ind1 = depth_m + depth_f
+      ind2 = depth_m - depth_f
+      fourth1 = (x[floor(ind1)] + x[ceiling(ind1)])/2
+      fourth2 = (x[floor(ind2)] + x[ceiling(ind2)])/2
+    }else{
+      fourth1 = x[depth_m + depth_f]
+      fourth2 = x[depth_m - depth_f]
+    }
+  
+    f_spread = fourth1 - fourth2
+
+    #Max and min
+    mx = max(x)
+    mn = min(x)
+  
+  
+    #Storing Results for Table
+    letterlist[[name]]=data.frame(Letter = c("Maximum", "Upper Fourth", "Median", "Mean", "Lower Fourth", "Minimum", "Outer Upper Fence", "Inner Upper Fence", "Inner Lower Fence", "Outer Lower Fence"), Value = c(mx, fourth1, med, mean(x), fourth2, mn, fourth2 + 2*1.5*f_spread, fourth2 + 1.5*f_spread, fourth1- 1.5*f_spread, fourth1 - 2*1.5*f_spread))
+  
+    #Finding outliers
+    mildind1 = which(x > fourth2 + 1.5*f_spread & x < fourth2 +2*1.5*f_spread)
+    mildind2 = which(x < fourth1 - 1.5*f_spread & x > fourth1 - 2*1.5*f_spread)
+    mild = x[c(mildind1, mildind2)]
+    extreme = x[which(x > fourth2 + 2*1.5*f_spread | x < fourth1 - 2*1.5*f_spread)]
+    outlierlist[[name]] = list(mi = mild, ex = extreme)
+  }
+  return(list(letters = letterlist, outliers = outlierlist))
+}#This version of the function does not calculates eighths
+
+minHinkley = function(datalist, powervec){#numeric list and numeric vector
+  sampleNames = names(datalist)
+  minls=lapply(1:length(sampleNames), function(i){
+  
+    d = datalist[[sampleNames[i]]]#data
+    #calculating depths
+    depth_m = (length(d) + 1)/2
+    depth_f = (depth_m + 1)/2
+    
+    #finding minimum for each power
+    hvec = unlist(lapply(1:length(powervec), function(j){
+      if (powervec[j] != 0){
+        d.t = d**powervec[j] # d.t = data transforme
+      }else{d.t = log(d)}
+      
+      x = sort(d.t,decreasing = F) #selecting data
+      #Mean and Median
+      med = median(x)
+      average = mean(x)
+  
+      #Fourth Calculations
+      if (depth_m + depth_f %% 1 > 0){
+        ind1 = depth_m + depth_f
+        ind2 = depth_m - depth_f
+        fourth1 = (x[floor(ind1)] + x[ceiling(ind1)])/2
+        fourth2 = (x[floor(ind2)] + x[ceiling(ind2)])/2
+        }else{
+          fourth1 = x[depth_m + depth_f]
+          fourth2 = x[depth_m - depth_f]
+        }
+      f_spread = fourth1 - fourth2
+      
+      #Hinkley calculation
+      h = (average - med)/f_spread
+      
+    }))
+    abs_hvec = abs(hvec)
+    hstar = min(abs_hvec)# minimum distance from 0
+    pstar = powervec[which(abs_hvec==hstar)]
+    hstar = hvec[which(abs_hvec ==hstar)]
+    return(data.frame(min_Hinkley = hstar,Power = pstar))
+  })
+  names(minls) = names(datalist)
+  df = do.call(rbind, minls)
+  return(df)
+}
+
+
+```
+
+## Introduction
+
+This document will explore two datasets that comprises physichemical properties and quality ratings of red and white wines. 
+
+```{r loading, include = F}
+reddf = read.csv('../data/winequality-red.csv', sep = ';')
+whitedf = read.csv('../data/winequality-white.csv', sep = ';')
+
+df = rbind(data.frame(reddf, Type= paste('Red\nN =', as.character(nrow(reddf)))), data.frame(whitedf, Type = paste('White\nN =', as.character(nrow(whitedf)))))
+```
+
+
+## What do the distirubtions look like of both red and white wines?
+
+```{r plot dists, echo = F, message = F}
+red_dist = plotdists(reddf, path = '../plots/reddists.png')
+white_dist = plotdists(whitedf, path = '../plots/whitedists.png')
+
+
+df.m = melt(df)
+df.m$Type = factor(df.m$Type)
+
+p = ggplot(df.m, aes(x=value, fill = Type))+
+  geom_histogram(alpha = 0.5, position = 'identity', bins = 50)+facet_wrap(~variable, scales = 'free')+plot_opts+ labs ( x = 'Value', y = 'Count', title = 'Properties of Red and White Wine')
+p
+ 
+ggsave('../plots/dists.png', plot = p, width = 8*4/3, height = 8, units = 'in')
+```
+
+\newpage
+
+## What are the letter values of red and white wine?
+
+```{r letter vals, echo = F}
+for (col in colnames(whitedf)){
+  dlist = list(White = whitedf[,col], Red = reddf[,col])
+  s = summaries2(dlist)
+  valueslist2=lapply(1:length(s$letters),function(i){ vec= as.data.frame(s$letters[i])[,2]})
+  names(valueslist2) = c('White', 'Red')
+  combined2 = do.call(cbind,valueslist2)
+  row.names(combined2) = s$letters$White$Letter
+  print(knitr::kable(combined2, caption = col, digits = 3))
+}
+```
+
+## What are the characteristics of quality outliers?
+
+### White Wine
+
+There are `r length(s$outliers$White$mi)` mild outliers and `r length(s$outliers$White$ex)` extreme outliers. Below will plot the characteristics of the mild outliers.
+\newpage
+
+#### Low Quality
+
+```{r outliers, echo = F}
+lowdf = whitedf[whitedf$quality==4,-ncol(whitedf)]
+plotdists(lowdf, path = '../plots/white_low_dists.png')
+```
+
+\newpage
+
+#### High Quality
+
+```{r outliers2, echo = F}
+highdf = whitedf[whitedf$quality>=7,-ncol(whitedf)]
+plotdists(highdf, path = '../plots/white_high_dists.png')
+```
+\newpage
+
+#### Both
+
+```{r bothoutliers, echo = F, message = F}
+bothdf = rbind(data.frame(lowdf, Outlier_Type = 'Low'), data.frame(highdf, Outlier_Type = 'High'))
+bdf.m = melt(bothdf)
+
+p = ggplot(bdf.m, aes(x=value, fill = Outlier_Type))+
+  geom_histogram(alpha = 0.5, position = 'identity', bins = 50)+facet_wrap(~variable, scales = 'free')+plot_opts+ labs ( x = 'Value', y = 'Count', title = 'Outlier Properties of White Wine')+ scale_fill_manual(values = c('#ff0000', '#0000ff'))
+p
+ 
+ggsave('../plots/white_outlier_dists.pdf', plot = p, width = 8*4/3, height = 8, units = 'in', device = 'pdf')
+```
+\newpage
+
+### Red Wine
+
+#### Low Quality
+
+```{r outliers3, echo = F, message = F }
+lowdf = reddf[reddf$quality==4,-ncol(reddf)]
+plotdists(lowdf, path = '../plots/red_low_dists.png')
+```
+\newpage
+
+#### High Quality
+
+```{r outliers4, echo = F, message = F }
+highdf = reddf[reddf$quality>=7,-ncol(reddf)]
+plotdists(highdf, path = '../plots/red_high_dists.png')
+```
+\newpage
+
+#### Both 
+
+```{r bothoutliers2, echo = F, message = F}
+bothdf = rbind(data.frame(lowdf, Outlier_Type = 'Low'), data.frame(highdf, Outlier_Type = 'High'))
+bdf.m = melt(bothdf)
+
+p = ggplot(bdf.m, aes(x=value, fill = Outlier_Type))+
+  geom_histogram(alpha = 0.5, position = 'identity', bins = 50)+facet_wrap(~variable, scales = 'free')+plot_opts+ labs ( x = 'Value', y = 'Count', title = 'Outlier Properties of Red Wine')+ scale_fill_manual(values = c('#ff0000', '#0000ff'))
+p
+ 
+ggsave('../plots/red_outlier_dists.pdf', plot = p, width = 8*4/3, height = 8, units = 'in', device = 'pdf')
+```
+
+## What does the symmetry of each variable look like?
+
+### Before Transformation
+
+```{r symmetry, echo = F}
+p2 = ggplot(df.m, aes(y = value, x = Type, color = Type))+
+  geom_boxplot(outlier.size = 0.1)+ facet_wrap(~variable, scales = 'free_y')+ plot_opts + stat_boxplot(geom= 'errorbar')+ labs(y = 'Value')+ 
+  theme(axis.text.x = element_blank())
+p2
+
+ggsave('../plots/box.png', plot = p2, width = 8*4/3, height = 8, units = 'in')
+```
+
+### Transforming by Optimizing Hinkley Value
+
+```{r minimizing hinkley, echo = F}
+redls = list()
+for (col in colnames(reddf)){
+  redls[[col]] = reddf[,col]
+}
+
+redres = minHinkley(redls, seq(from = -2, to = 2, by = 0.01))
+knitr::kable(redres, caption = 'Red Wine Results')
+
+
+whitels = list()
+for (col in colnames(whitedf)){
+  whitels[[col]] = whitedf[,col]
+}
+
+whiteres = minHinkley(whitels, seq(from = -2, to = 2, by = 0.01))
+knitr::kable(whiteres, caption = 'White Wine Results')
+
+combinedres = data.frame()
+for (r in rownames(whiteres)){
+  combinedres[r,'Mean_Power'] = mean(c(whiteres[r,2], redres[r,2]))
+}
+
+knitr::kable(combinedres, caption = 'Combined Results', digits = 4)
+
+for (col in colnames(whitedf)){
+  meanp = combinedres$Mean_Power[rownames(combinedres)==col]
+  if (meanp == 0){
+    whitedf[,col] == log(whitedf[,col])
+    reddf[,col] == log(reddf[,col])
+  }else{
+  whitedf[,col] = whitedf[,col]**meanp
+  reddf[,col] = reddf[,col]**meanp
+  }
+}
+
+```
+
+### Plotting Transformed Variables
+
+```{r symmetry2, echo = F, message = F}
+
+df = rbind(data.frame(reddf, Type= paste('Red\nN =', as.character(nrow(reddf)))), data.frame(whitedf, Type = paste('White\nN =', as.character(nrow(whitedf)))))
+
+df.m = melt(df)
+df.m$Type = factor(df.m$Type)
+
+p2 = ggplot(df.m, aes(y = value, x = Type, color = Type))+
+  geom_boxplot(outlier.size = 0.1)+ facet_wrap(~variable, scales = 'free_y')+ plot_opts + stat_boxplot(geom= 'errorbar')+ labs(y = 'Value')+ 
+  theme(axis.text.x = element_blank())+labs(y = 'Value^mean(p)')
+p2
+
+ggsave('../plots/box_transform.png', plot = p2, width = 8*4/3, height = 8, units = 'in')
+```
+
+```{r untransform, echo = F}
+reddf = read.csv('../data/winequality-red.csv', sep = ';')
+whitedf = read.csv('../data/winequality-white.csv', sep = ';')
+df = rbind(data.frame(reddf, Type= 'Red'), data.frame(whitedf, Type = 'White'))
+```
+
+## Which variables are statistically different between the untransformed data?
+
+Below will employ a two sample t test to test if the populations are equal for each variable. We assume unequal variances despite the power transformation as the IQR spread is not equal in all cases. We will also run a Mood's Median test to test for differences in median rather than mean.
+
+```{r ttest_mood, echo = F}
+tdf = data.frame()
+mdf = data.frame()
+for (col in colnames(whitedf)){
+  #T test
+  res = t.test(x = whitedf[,col], y = reddf[,col])
+  tdf[col, 't'] = res$statistic
+  tdf[col, 'p'] = res$p.value
+  
+  #Mood's median test
+  df.s = df.m[df.m$variable==col,]
+  medres = median_test(value~Type, data = df.s)
+  
+  mdf[col, 'Z'] = medres@statistic@teststatistic
+  mdf[col, 'p'] = 2*pnorm(-abs(medres@statistic@teststatistic))
+}
+tdf = tdf[order(tdf$t),]
+mdf = mdf[order(mdf$Z),]
+knitr::kable(tdf, caption = 't-test Results', digits = 3)
+knitr::kable(mdf, caption = "Mood's Median Results", digits = 3)
+```
+
+## Which factors impact the quality score the most?
+
+### Examining Correlations with Quality
+
+```{r correlations, echo = F, message = F}
+wcordf = data.frame()
+rcordf = data.frame()
+meancor = data.frame()
+for (col in colnames(whitedf[,-ncol(whitedf)])){
+  wcordf[col, 'r'] = cor(whitedf[,col], whitedf[,'quality'])
+  rcordf[col, 'r'] = cor(reddf[,col], reddf[,'quality'])
+  meancor[col, 'r'] = mean(c(cor(reddf[,col], reddf[,'quality']), cor(whitedf[,col], whitedf[,'quality'])))
+}
+wcordf$Type = 'White'
+rcordf$Type = 'Red'
+rcordf$variable = rownames(rcordf)
+wcordf$variable = rownames(wcordf)
+meancor = as.matrix(meancor)
+meancor = meancor[order(meancor),]
+meancor = data.frame(r = meancor)
+meancor$o = seq(from = 1, to = nrow(meancor), by = 1)
+
+rcordf$o[match(rownames(meancor), rcordf$variable)] = meancor$o
+wcordf$o[match(rownames(meancor), wcordf$variable)] = meancor$o
+
+cordf = rbind(wcordf, rcordf)
+#cordf = cordf[order(cordf$o),]
+cordf$Type = as.factor(cordf$Type)
+cordf$variable = as.factor(cordf$variable)
+p3 = cordf %>%
+  mutate(variable = fct_reorder(variable, o)) %>%
+  ggplot(aes(x=variable, y = r))+
+           geom_dotplot(binaxis = "y", stackdir = "center", aes( fill= Type))+plot_opts+theme(axis.text.x = element_text(angle = 45, vjust = .6))+
+    labs(x = 'Variable')
+
+p3
+
+ggsave('../plots/correlations.png', plot = p3, height = 4, width = 5, units = 'in', dpi = 600)
+```
+
+### MLR
+
+
+#### Modeling
+
+```{r ols, echo = F}
+w_mlr = lm(quality ~ 0+ fixed.acidity +volatile.acidity+ citric.acid+residual.sugar+ chlorides+ free.sulfur.dioxide + total.sulfur.dioxide + density+ pH+ sulphates + alcohol, data = whitedf)
+summary(w_mlr)
+
+coefdf = as.data.frame(summary(w_mlr)$coefficients)
+coefdf = coefdf[order(coefdf$Estimate),]
+knitr::kable(coefdf, digits = 3, caption = 'White Wine Regression Coefficients')
+
+r_mlr = lm(quality ~ 0+ fixed.acidity +volatile.acidity+ citric.acid+residual.sugar+ chlorides+ free.sulfur.dioxide + total.sulfur.dioxide + density+ pH+ sulphates + alcohol, data = reddf)
+summary(r_mlr)
+
+coefdf = as.data.frame(summary(r_mlr)$coefficients)
+coefdf = coefdf[order(coefdf$Estimate),]
+knitr::kable(coefdf, digits = 3, caption = 'Red Wine Regression Coefficients')
+```
+
+
+#### Plotting Coefficients
+
+```{r plot coefs, echo = F}
+cs = c('#00BFC4', '#F8766D')
+pc = plot_coefs(w_mlr, r_mlr, model.names = c('White','Red'), colors = cs)+theme(axis.text.y = element_text(face = 'bold'))
+
+pc
+ggsave('../plots/coefplot.png', plot = pc, height = 7, width = 7, dpi = 600, units = 'in')
+```
+
